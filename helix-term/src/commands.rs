@@ -246,23 +246,31 @@ impl MappableCommand {
         match &self {
             Self::Typable { name, args, doc: _ } => {
                 if let Some(command) = typed::TYPABLE_COMMAND_MAP.get(name.as_str()) {
+                    let args = match Args::from_signature(
+                        args,
+                        command.signature.parse_mode,
+                        command.signature.flags,
+                    ) {
+                        Ok(args) => args,
+                        Err(err) => {
+                            cx.editor.set_error(err.to_string());
+                            return;
+                        }
+                    };
+
+                    if let Err(err) = command.ensure_signature(args.len()) {
+                        cx.editor.set_error(err.to_string());
+                        return;
+                    }
+
                     let mut cx = compositor::Context {
                         editor: cx.editor,
                         jobs: cx.jobs,
                         scroll: None,
                     };
 
-                    match variables::expand(cx.editor, args.into(), true) {
-                        Ok(args) => {
-                            if let Err(err) = (command.fun)(
-                                &mut cx,
-                                Args::from(args.as_ref()),
-                                PromptEvent::Validate,
-                            ) {
-                                cx.editor.set_error(format!("{err}"));
-                            }
-                        }
-                        Err(e) => cx.editor.set_error(format!("{e}")),
+                    if let Err(err) = (command.fun)(&mut cx, args, PromptEvent::Validate) {
+                        cx.editor.set_error(format!("{err}"));
                     }
                 }
             }
@@ -4345,7 +4353,7 @@ fn yank_joined_impl(editor: &mut Editor, separator: &str, register: char) {
         .fragments(text)
         .fold(String::new(), |mut acc, fragment| {
             if !acc.is_empty() {
-                acc.push_str(&helix_core::shellwords::unescape(separator));
+                acc.push_str(&helix_core::shellwords::unescape(separator, false));
             }
             acc.push_str(&fragment);
             acc
